@@ -1,0 +1,275 @@
+<html>
+
+<head>
+<title>Mp2</title>
+<meta http-equiv='content-type' content='text/html; charset=ISO-8859-1'>
+
+<!-- MATH Libraries //-->
+<script type='text/javascript' src='js/math/gl-matrix-min.js'></script>
+<!-- WEBGL Libraries //-->
+<script type='text/javascript' src='js/webgl/Utils.js'></script>
+<script type='text/javascript' src='js/webgl/Program.js'></script>
+<script type='text/javascript' src='js/webgl/Scene.js'></script>
+<script type='text/javascript' src='js/webgl/Axis.js'></script>
+<script type='text/javascript' src='js/webgl/Floor.js'></script>
+<script type='text/javascript' src='js/webgl/WebGLApp.js'></script>
+
+<script id="shader-vs" type="x-shader/x-vertex">
+attribute vec3 aVertexPosition;
+attribute vec3 aVertexNormal;
+attribute vec4 aVertexColor;
+
+uniform mat4 uPMatrix;
+
+uniform vec3 uPosition; 
+uniform vec3 uZ;
+uniform vec3 uUp;
+uniform vec3 uRight;
+
+uniform vec4 uMaterialDiffuse; 
+varying vec4 vFinalColor;
+
+void main(void) {
+    
+    vFinalColor = uMaterialDiffuse;
+    
+    vec3 r = uRight;
+	vec3 u = uUp;
+    vec3 v = -uZ;
+	
+	mat4 rotation = mat4(r.x, u.x, v.x, 0,
+						 r.y, u.y, v.y, 0,
+						 r.z, u.z, v.z, 0,
+						 0, 0, 0, 1);
+    
+    mat4 translation = mat4(1.0);
+	translation[3].xyz = -uPosition;
+
+    //Transformed vertex position
+    gl_Position = uPMatrix * rotation * translation * vec4(aVertexPosition,1.0); // vertex w=1
+}
+</script>
+
+<script id="shader-fs" type="x-shader/x-fragment">
+#ifdef GL_ES
+precision highp float;
+#endif
+
+varying vec4  vFinalColor;
+
+void main(void)  {
+ gl_FragColor = vFinalColor;
+}
+</script>
+
+<script id='code-js' type="text/javascript">
+
+
+var gl = null;     // WebGL context
+var prg = null;    // The program (shaders)
+var pMatrix = mat4.create();    // The projection matrix
+var planePosition;
+var up;
+var right;
+var z;
+var elevation  = 0.0; // Pitch
+var roll       = 0.0; // Roll
+var c_width = 720;
+var c_height = 540;
+/**
+*   Defines the initial values for the transformation matrices
+*/
+function initTransforms(){   
+
+    //Initialize Perspective matrix
+    mat4.identity(pMatrix);
+    mat4.perspective(30, c_width / c_height, 0.1, 1000.0, pMatrix);
+	gl.uniformMatrix4fv(prg.uPMatrix, false, pMatrix);    //Maps the Perspective matrix to the uniform prg.uPMatrix
+    planePosition = vec3.create([0,10,-100]);
+	up     = vec3.create([0,1,0]);
+	right  = vec3.create([1,0,0]);
+	z      = vec3.create([0,0,1]);
+}
+
+
+function updateTransforms() {
+	var damping = 0.01;
+	var velocity = 10;
+	
+	var rotateMatrix = mat4.create();
+	mat4.identity(rotateMatrix);
+	
+	// Rotate about plane's x axis
+	mat4.rotate(rotateMatrix, damping * pitchVelocity, right);
+
+	// Rotate about plane's z axis
+	mat4.rotate(rotateMatrix, damping * rollVelocity, z);
+
+	// Move along plane's Z axis
+	planePosition[0] += damping * velocity * z[0];
+	planePosition[1] += damping * velocity * z[1];
+	planePosition[2] += damping * velocity * z[2];
+
+	// Update our coord system from the rotation
+	mat4.multiplyVec3(rotateMatrix, up);
+	mat4.multiplyVec3(rotateMatrix, z);
+	mat4.multiplyVec3(rotateMatrix, right);
+ }
+
+
+/**
+* Maps the matrices to shader matrix uniforms
+*
+* Called once per rendering cycle. 
+*/
+function updateUniforms(){
+    gl.uniform3fv(prg.uPosition, planePosition);
+	gl.uniform3fv(prg.uUp, up);
+	gl.uniform3fv(prg.uZ, z);
+	gl.uniform3fv(prg.uRight, right);
+}
+
+/**
+*  Sets up the canvas
+*/
+function configure(){
+    gl.clearColor(0.3,0.3,0.3, 1.0);
+    gl.clearDepth(100.0);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    initTransforms();
+}
+
+/**
+* Load our scene
+*/
+function load(){
+    Floor.build(200,2);
+    Axis.build(60);
+    
+    Scene.addObject(Floor);
+    Scene.addObject(Axis);
+}
+
+
+/**
+* Main rendering function. Called every 500ms according to WebGLStart function (see below)
+*/
+function draw() {
+  gl.viewport(0, 0, c_width, c_height);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        
+    try{
+        
+        updateTransforms();
+        updateUniforms();        
+        
+        for (var i = 0; i < Scene.objects.length; i++){
+                       
+            var object = Scene.objects[i];
+            
+            //Setting uniforms
+            gl.uniform4fv(prg.uMaterialDiffuse, object.diffuse);
+            gl.uniform1i(prg.uWireframe,object.wireframe);
+            gl.uniform1i(prg.uPerVertexColor, object.perVertexColor);
+            
+            //Setting attributes
+            gl.enableVertexAttribArray(prg.aVertexPosition);
+            
+            gl.bindBuffer(gl.ARRAY_BUFFER, object.vbo);
+            gl.vertexAttribPointer(prg.aVertexPosition, 3, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(prg.aVertexPosition);            
+            
+            if(!object.wireframe){
+                gl.bindBuffer(gl.ARRAY_BUFFER, object.nbo);
+            }
+            
+            if (object.perVertexColor){
+                gl.bindBuffer(gl.ARRAY_BUFFER, object.cbo);
+            }
+            
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, object.ibo);
+            
+            if (object.wireframe){
+                gl.drawElements(gl.LINES, object.indices.length, gl.UNSIGNED_SHORT,0);
+            }
+            else{
+                gl.drawElements(gl.TRIANGLES, object.indices.length, gl.UNSIGNED_SHORT,0);
+            }
+            gl.bindBuffer(gl.ARRAY_BUFFER, null);
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+            
+        }
+    }
+    catch(err){
+        alert(err);
+        console.error(err.description);
+    }
+}
+
+var fps = 60;
+var rollVelocity = 0;
+var pitchVelocity = 0;
+function animate(){
+
+	// Update rotation and pitch from keypress
+    roll += rollVelocity;
+    elevation += pitchVelocity;
+  
+    draw();
+
+    setTimeout(function() {
+        requestAnimationFrame(animate);
+    }, 1000 / fps);
+
+}
+
+function keydown(ev) {
+	var keyCode = ev.keyCode;
+    if (keyCode == 87){
+		pitchVelocity = 0.5;
+	} else if (keyCode == 83){
+		pitchVelocity = -0.5;
+	} else if (keyCode == 65){
+		rollVelocity = 0.5;
+	} else if (keyCode == 68){
+		rollVelocity = -0.5;
+	}   
+}
+
+function keyup(ev) {
+	var keyCode = ev.keyCode;
+    if (keyCode == 87 || keyCode == 83){
+		pitchVelocity = 0.0;
+	} else if (keyCode == 65 || keyCode == 68){
+		rollVelocity = 0.0;
+	}  
+}
+
+
+/**
+* Entry point. This function is invoked when the page is loaded
+*/
+var app = null;
+function runWebGLApp() {
+    document.onkeydown = function(ev) {keydown(ev);};
+    document.onkeyup = function(ev) {keyup(ev);};
+
+    app = new WebGLApp("canvas-element-id")
+    app.configureGLHook = configure;
+    app.loadSceneHook   = load;
+    app.drawSceneHook   = draw;
+    app.run();
+    animate();
+}
+</script>
+</head>
+
+<body onLoad='runWebGLApp()'>
+<h1>MP2 Flight Simulator - Yusuf Sobh</h1>
+<canvas id='canvas-element-id' width='720' height='540'>
+	Your browser does not support the HTML5 canvas element.
+</canvas>
+</body>
+
+</html>
